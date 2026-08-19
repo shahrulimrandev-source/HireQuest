@@ -1,0 +1,663 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+
+import { AnimatePresence, motion } from 'framer-motion';
+import { User, Briefcase, MapPin, AlignLeft, GraduationCap, Upload, Award, FileText, LayoutDashboard, Search, Trash2, X, Plus, Zap, MessageSquare, Settings, LogOut, CheckCircle, Globe, ChevronRight, Users, Check, Loader2, Send, Building, Linkedin, Mail, Phone, Image as ImageIcon, Filter } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import CandidateFeedBlock from '../components/shared/CandidateFeedBlock';
+import EmailComposeModal from '../components/shared/EmailComposeModal';
+import { toast } from 'sonner';
+import Cropper from 'react-easy-crop';
+import getCroppedImg from '@/utils/cropImage';
+
+export default function CompanyDashboard() {
+  const [applicants, setApplicants] = useState<any[]>([]);
+  const [discoverCandidates, setDiscoverCandidates] = useState<any[]>([]);
+  const [discoverSearchQuery, setDiscoverSearchQuery] = useState('');
+  const [emailModalData, setEmailModalData] = useState<{email: string, subject: string} | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [matchFilterJob, setMatchFilterJob] = useState('All');
+  const [companyJobs, setCompanyJobs] = useState<any[]>([]);
+  const [editingJob, setEditingJob] = useState<any | null>(null);
+  const [activeTab, setActiveTab] = useState<'discover'|'applicants'|'interviews'|'create_job'|'rankings'|'profile'|'my_jobs'|'matches'>('discover');
+  const [confirmDialog, setConfirmDialog] = useState<{isOpen: boolean, message: string, onConfirm: () => void} | null>(null);
+  const [applicantView, setApplicantView] = useState<'pending'|'history'>('pending');
+  const [selectedApplicantJobFilter, setSelectedApplicantJobFilter] = useState<string>('All');
+  const navigate = useNavigate();
+  const discoverScrollRef = useRef<HTMLDivElement>(null);
+  
+  const formatTimeAgo = (dateString: string) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    const now = new Date();
+    const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+    
+    if (seconds < 60) return 'Just now';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d ago`;
+    const weeks = Math.floor(days / 7);
+    if (weeks < 4) return `${weeks}w ago`;
+    
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+  
+  const [aiLanguage, setAiLanguage] = useState<'ms' | 'en'>(() => {
+    return (localStorage.getItem('aiLanguage') as 'ms' | 'en') || 'ms';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('aiLanguage', aiLanguage);
+  }, [aiLanguage]);
+
+  const [aiReasons, setAiReasons] = useState<Record<string, string>>({});
+  const [fetchingReasonId, setFetchingReasonId] = useState<string | null>(null);
+  const [selectedCandidateModal, setSelectedCandidateModal] = useState<any | null>(null);
+  const [inviteMessage, setInviteMessage] = useState('');
+  
+  const [createMode, setCreateMode] = useState<'job'|'ad'>('job');
+  const [postCaption, setPostCaption] = useState('');
+  const [postMedia, setPostMedia] = useState<File | null>(null);
+  const [postMediaType, setPostMediaType] = useState<'image'|'video'|'text'>('text');
+  const [postBackgroundStyle, setPostBackgroundStyle] = useState('bg-gradient-to-br from-purple-500 to-indigo-600');
+  const [postTextPosition, setPostTextPosition] = useState('justify-center items-center text-center');
+  
+  const [companyPosts, setCompanyPosts] = useState<any[]>([]);
+  const [myContentMode, setMyContentMode] = useState<'jobs'|'ads'>('jobs');
+  const [selectedPostModal, setSelectedPostModal] = useState<any | null>(null);
+  
+  
+  const [chatModalApplication, setChatModalApplication] = useState<any | null>(null);
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [isSendingMsg, setIsSendingMsg] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Interview States
+  const [interviews, setInterviews] = useState<any[]>([]);
+  const [schedulingApplicant, setSchedulingApplicant] = useState<any | null>(null);
+  const [interviewForm, setInterviewForm] = useState({
+    date: '',
+    time: '',
+    type: 'online',
+    link: ''
+  });
+  
+  const fetchInterviews = async () => {
+    try {
+      const res = await fetch(`/api/interviews/company/${user.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setInterviews(data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleScheduleInterview = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!schedulingApplicant) return;
+    try {
+      const datetime = `${interviewForm.date} ${interviewForm.time}:00`;
+      const res = await fetch('/api/interviews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          application_id: schedulingApplicant.id,
+          company_id: user.id,
+          seeker_id: schedulingApplicant.seeker_id,
+          scheduled_date: datetime,
+          type: interviewForm.type,
+          link_or_location: interviewForm.link,
+          notes: ''
+        })
+      });
+      if (res.ok) {
+        toast.success('Interview scheduled successfully!');
+        setSchedulingApplicant(null);
+        setInterviewForm({ date: '', time: '', type: 'online', link: '' });
+        fetchApplicants();
+        fetchInterviews();
+      } else {
+        toast.error('Failed to schedule interview');
+      }
+    } catch (err) {
+      toast.error('Error scheduling interview');
+    }
+  };
+
+  const handleUpdateInterviewStatus = async (id: number, status: string) => {
+    try {
+      const res = await fetch(`/api/interviews/${id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      if (res.ok) {
+        toast.success(`Interview marked as ${status}`);
+        fetchInterviews();
+      }
+    } catch (e) {
+      toast.error('Failed to update status');
+    }
+  };
+
+  const openChat = async (app: any) => {
+    setChatModalApplication(app);
+    try {
+      await fetch(`/api/messages/read/${app.id}/${user.id}`, { method: 'PUT' });
+      setApplicants(prev => prev.map(a => a.id === app.id ? { ...a, unreadCount: 0 } : a));
+      const res = await fetch(`/api/messages/${app.id}`);
+      const data = await res.json();
+      setChatMessages(data);
+    } catch (e) {
+      toast.error('Failed to load messages');
+    }
+  };
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !chatModalApplication) return;
+    setIsSendingMsg(true);
+    try {
+      const res = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          application_id: chatModalApplication.id,
+          sender_id: user.id,
+          receiver_id: chatModalApplication.seeker_id,
+          content: newMessage
+        })
+      });
+      if (res.ok) {
+        setNewMessage('');
+        const msgRes = await fetch(`/api/messages/${chatModalApplication.id}`);
+        const msgData = await msgRes.json();
+        setChatMessages(msgData);
+        fetchApplicants();
+      }
+    } catch (err) {
+      toast.error('Failed to send message');
+    } finally {
+      setIsSendingMsg(false);
+    }
+  };
+
+  const fetchAiReason = async (seekerId: number, jobId: number, cardId: string) => {
+    setFetchingReasonId(cardId);
+    try {
+      const res = await fetch('/api/ai/match-reason', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seekerId, jobId, lang: aiLanguage })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAiReasons(prev => ({ ...prev, [cardId]: data.reason }));
+      } else {
+        toast.error(aiLanguage === 'en' ? 'Failed to get AI reason.' : 'Gagal mendapatkan ulasan AI.');
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error(aiLanguage === 'en' ? 'Error fetching AI reason.' : 'Ralat mendapatkan ulasan AI.');
+    } finally {
+      setFetchingReasonId(null);
+    }
+  };
+  const [user, setUser] = useState(JSON.parse(localStorage.getItem('user') || '{}'));
+  
+  const [profileData, setProfileData] = useState({
+    name: user.name || '',
+    email: user.email || '',
+    skills: user.skills || '',
+    bio: user.bio || '',
+    phone_number: user.phone_number || '',
+    website_link: user.website_link || '',
+    linkedin_link: user.linkedin_link || '',
+    location: user.location || ''
+  });
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+
+  useEffect(() => {
+    setProfileData({
+      name: user.name || '',
+      email: user.email || '',
+      skills: user.skills || '',
+      bio: user.bio || '',
+      phone_number: user.phone_number || '',
+      website_link: user.website_link || '',
+      linkedin_link: user.linkedin_link || '',
+      location: user.location || ''
+    });
+  }, [user]);
+  // Cropper State
+  const [cropModalOpen, setCropModalOpen] = useState(false);
+  const [imageToCrop, setImageToCrop] = useState<string | null>(null);
+  const [croppedImageBlob, setCroppedImageBlob] = useState<Blob | null>(null);
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
+
+  const onCropComplete = useCallback((_croppedArea: any, croppedAreaPixels: any) => {
+    setCroppedAreaPixels(croppedAreaPixels);
+  }, []);
+
+  const handleProfileImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setImageToCrop(reader.result as string);
+        setCropModalOpen(true);
+      };
+      reader.readAsDataURL(e.target.files[0]);
+    }
+  };
+
+  const confirmCrop = async () => {
+    if (!imageToCrop || !croppedAreaPixels) return;
+    try {
+      const croppedImage = await getCroppedImg(imageToCrop, croppedAreaPixels);
+      if (croppedImage) {
+        setCroppedImageBlob(croppedImage);
+        setCropModalOpen(false);
+        toast.success("Profile picture cropped and ready to save!");
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error("Failed to crop image.");
+    }
+  };
+
+  useEffect(() => {
+    if (!user.id || user.role !== 'company') {
+      navigate('/login');
+      return;
+    }
+    if (activeTab === 'discover' || activeTab === 'rankings') fetchDiscoverCandidates();
+    else if (activeTab === 'applicants' || activeTab === 'matches') fetchApplicants();
+    else if (activeTab === 'my_jobs') {
+      fetchCompanyJobs();
+      fetchCompanyPosts();
+    } else if (activeTab === 'interviews') {
+      fetchInterviews();
+    }
+  }, [user.id, activeTab]);
+
+  const fetchApplicants = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/applications/company/${user.id}`);
+      const data = await response.json();
+      setApplicants(data);
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to load applicants');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchDiscoverCandidates = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/candidates/match/${user.id}`);
+      const data = await response.json();
+      setDiscoverCandidates(data);
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to load recommended candidates');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchCompanyJobs = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/jobs/company/${user.id}`);
+      const data = await response.json();
+      setCompanyJobs(data);
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to load your jobs');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchCompanyPosts = async () => {
+    try {
+      const response = await fetch(`/api/company-posts/company/${user.id}`);
+      const data = await response.json();
+      setCompanyPosts(data);
+    } catch (error) {
+      console.error(error);
+      toast.error('Failed to load posts');
+    }
+  };
+
+  const handleDeleteJob = async (id: number) => {
+    setConfirmDialog({
+      isOpen: true,
+      message: 'Are you sure you want to delete this job post? This action cannot be undone.',
+      onConfirm: async () => {
+        try {
+          const response = await fetch(`/api/jobs/${id}`, { method: 'DELETE' });
+        if (response.ok) {
+          toast.success('Job deleted successfully');
+          setCompanyJobs(prev => prev.filter(job => job.id !== id));
+        } else {
+          toast.error('Failed to delete job');
+        }
+      } catch (error) {
+        console.error(error);
+        toast.error('Server error');
+      }
+    }});
+  };
+
+  const handleDeletePost = async (id: number) => {
+    setConfirmDialog({
+      isOpen: true,
+      message: 'Are you sure you want to delete this advertisement? This action cannot be undone.',
+      onConfirm: async () => {
+        try {
+          const response = await fetch(`/api/company-posts/${id}`, { method: 'DELETE' });
+        if (response.ok) {
+          toast.success('Advertisement deleted successfully');
+          setCompanyPosts(prev => prev.filter(post => post.id !== id));
+        } else {
+          toast.error('Failed to delete post');
+        }
+      } catch (error) {
+        console.error(error);
+        toast.error('Server error');
+      }
+    }});
+  };
+
+  const handleEditJobSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingJob) return;
+    try {
+      toast.info('Updating job...', { id: 'edit-job' });
+      const response = await fetch(`/api/jobs/${editingJob.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editingJob)
+      });
+      if (response.ok) {
+        toast.success('Job updated successfully!', { id: 'edit-job' });
+        setEditingJob(null);
+        fetchCompanyJobs();
+      } else {
+        toast.error('Failed to update job', { id: 'edit-job' });
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error('Server error', { id: 'edit-job' });
+    }
+  };
+
+  const updateApplicationStatus = async (id: number, status: string) => {
+    try {
+      await fetch(`/api/applications/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const handleApplicantSwipeRight = (applicant: any) => {
+    updateApplicationStatus(applicant.id, 'accepted');
+    setApplicants(prev => prev.filter(a => a.id !== applicant.id));
+    toast.success(`Shortlisted ${applicant.name} for ${applicant.jobTitle}`);
+  };
+
+  const handleApplicantSwipeLeft = (applicant: any) => {
+    updateApplicationStatus(applicant.id, 'rejected');
+    setApplicants(prev => prev.filter(a => a.id !== applicant.id));
+  };
+
+  const handleDiscoverSwipeRight = (candidate: any) => {
+    setSelectedCandidateModal(candidate);
+  };
+
+  const handleInviteConfirm = async () => {
+    if (!selectedCandidateModal || !selectedCandidateModal.matchedJobId) return;
+    try {
+      const response = await fetch('/api/applications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          job_id: selectedCandidateModal.matchedJobId, 
+          seeker_id: selectedCandidateModal.id, 
+          status: 'pending', 
+          message: inviteMessage 
+        })
+      });
+      const data = await response.json();
+      if (data.success) {
+        toast.success(`Invited ${selectedCandidateModal.name}! They have been added to your Applicants tab.`);
+        setDiscoverCandidates(prev => prev.filter(c => c.id !== selectedCandidateModal.id));
+        setSelectedCandidateModal(null);
+        setInviteMessage('');
+        fetchApplicants();
+      } else {
+        toast.error(data.message || 'Failed to invite');
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error('Server error');
+    }
+  };
+
+
+
+  const handleProfileUpdate = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    
+    const formData = new FormData(e.currentTarget);
+    if (croppedImageBlob) {
+      formData.set('profile_picture', croppedImageBlob, 'profile_pic.jpg');
+    }
+    
+    try {
+      // 1. Update text data
+      const response = await fetch(`/api/users/${user.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profileData)
+      });
+      
+      if (!response.ok) throw new Error('Failed to update profile details');
+      
+      let updatedUser = { ...user, ...profileData };
+
+      // 2. Upload files
+      const profilePic = formData.get('profile_picture') as File;
+      const banner = formData.get('banner') as File;
+
+      if ((profilePic && profilePic.size > 0) || (banner && banner.size > 0)) {
+        toast.info('Uploading files...', { id: 'uploading' });
+        const fileRes = await fetch(`/api/users/${user.id}/uploads`, {
+          method: 'POST',
+          body: formData
+        });
+        const fileData = await fileRes.json();
+        if (fileData.success) {
+          updatedUser = fileData.user;
+          toast.success('Files uploaded successfully!', { id: 'uploading' });
+        } else {
+          toast.error('File upload failed', { id: 'uploading' });
+        }
+      }
+
+      toast.success('Profile saved!');
+      setUser(updatedUser);
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      setCroppedImageBlob(null);
+      
+    } catch (error: any) {
+      console.error('Profile update error:', error);
+      toast.error(`Error saving: ${error.message || 'Server error'}`);
+    } finally {
+      setIsEditingProfile(false);
+    }
+  };
+
+  const handleCreatePost = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!postCaption.trim() && !postMedia) {
+      toast.error("Please provide a caption or media");
+      return;
+    }
+    
+    toast.info('Publishing post...', { id: 'create-post' });
+    const formData = new FormData();
+    formData.append('company_id', user.id);
+    formData.append('caption', postCaption);
+    formData.append('media_type', postMediaType);
+    if (postMediaType === 'text') {
+      formData.append('background_style', postBackgroundStyle);
+      formData.append('text_position', postTextPosition);
+    }
+    if (postMedia) formData.append('media', postMedia);
+
+    try {
+      const res = await fetch('/api/company-posts', {
+        method: 'POST',
+        body: formData
+      });
+      if (res.ok) {
+        toast.success('Post published successfully!', { id: 'create-post' });
+        setPostCaption('');
+        setPostMedia(null);
+        setPostMediaType('text');
+        setMyContentMode('ads');
+        setActiveTab('my_jobs');
+      } else {
+        toast.error('Failed to create post', { id: 'create-post' });
+      }
+    } catch (e) {
+      toast.error('Server error', { id: 'create-post' });
+    }
+  };
+
+
+
+  const handleSignOut = () => {
+    localStorage.removeItem('user');
+    toast.success('Signed out successfully');
+    navigate('/login');
+  };
+
+  const handleDeleteAccount = async () => {
+    setConfirmDialog({
+      isOpen: true,
+      message: 'Are you sure you want to delete your company account? This action cannot be undone.',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/users/${user.id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Failed to delete account');
+        toast.success('Account deleted successfully');
+        localStorage.removeItem('user');
+        navigate('/');
+      } catch (error: any) {
+          toast.error(`Error deleting account: ${error.message}`);
+        }
+      }
+    });
+  };
+
+  const handleRemoveFile = async (fileType: string) => {
+    setConfirmDialog({
+      isOpen: true,
+      message: 'Are you sure you want to remove this file?',
+      onConfirm: async () => {
+        try {
+          toast.info('Removing file...', { id: 'removing' });
+        const res = await fetch(`/api/users/${user.id}/uploads/${fileType}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Failed to remove file');
+        const data = await res.json();
+        setUser(data.user);
+        localStorage.setItem('user', JSON.stringify(data.user));
+        toast.success('File removed', { id: 'removing' });
+      } catch (error: any) {
+          toast.error(`Error removing file: ${error.message}`, { id: 'removing' });
+        }
+    }});
+  };
+
+  const handleCreateJob = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const jobData = {
+      company_id: user.id,
+      title: formData.get('title'),
+      department: formData.get('department'),
+      location: formData.get('location'),
+      type: formData.get('type'),
+      salary: formData.get('salary'),
+      description: formData.get('description'),
+      requirements: formData.get('requirements'),
+      skills: formData.get('skills')
+    };
+
+    try {
+      const response = await fetch('/api/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(jobData)
+      });
+      const data = await response.json();
+      if (data.success) {
+        toast.success('Job created successfully!');
+        e.currentTarget.reset();
+        setActiveTab('discover');
+      } else {
+        toast.error('Failed to create job');
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error('Server error');
+    }
+  };
+
+  return (
+    <div className="theme-company min-h-screen bg-background text-foreground flex flex-col h-screen overflow-hidden relative">
+      
+      {/* Animated Background Blobs */}
+      <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
+        <motion.div 
+          animate={{ x: [0, 100, 0], y: [0, -50, 0], scale: [1, 1.1, 1] }} 
+          transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
+          className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[#FF66B2]/10 rounded-full blur-[120px]"
+        />
+        <motion.div 
+          animate={{ x: [0, -100, 0], y: [0, 100, 0], scale: [1, 1.2, 1] }} 
+          transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+          className="absolute top-[20%] right-[-10%] w-[35%] h-[35%] bg-[#00F0FF]/10 rounded-full blur-[120px]"
+        />
+        <motion.div 
+          animate={{ x: [0, 50, 0], y: [0, 50, 0], scale: [1, 1.3, 1] }} 
+          transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
+          className="absolute bottom-[-10%] left-[20%] w-[45%] h-[45%] bg-[#FF66B2]/5 rounded-full blur-[120px]"
+        />
+      </div>
+      {/* Crop Modal */}
+      <AnimatePresence>
+        {cropModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+            <div className="bg-card w-full max-w-md rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+              <div className="p-4 border-b flex justify-between items-center bg-muted/30">
+                <h3 className="font-bold text-lg">Crop Profile Picture</h3>
+                <button onClick={() => setCropModalOpen(false)} className="p-1 hover:bg-muted rounded-full transition-colors"><X size={20} /></button>
+

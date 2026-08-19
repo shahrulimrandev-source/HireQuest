@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.DS_Store
+uploads/
+temp_pdf/
+server/node_modules/
+server/.env
+server/uploads/
+*.log
