@@ -123,7 +123,7 @@ export default function CompanyDashboard() {
         fetchApplicants();
         fetchInterviews();
       } else {
-        toast.error('Failed to schedule interview');
+        toast.error('Failed to interview');
       }
     } catch (err) {
       toast.error('Error scheduling interview');
@@ -744,7 +744,8 @@ export default function CompanyDashboard() {
         ))}
       </div>
     
-      {/* Crop Modal */}
+      {/* Crop Modal */}
+
       <AnimatePresence>
         {cropModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
